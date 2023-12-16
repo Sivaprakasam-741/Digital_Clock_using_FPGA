@@ -1,0 +1,277 @@
+module Decoder_7_segment(
+ input [3:0] in, //4 bits going into the segment
+ output reg [6:0] seg //display the BCD number on a 7-segment
+ );
+
+ always @(in)
+ begin
+ case(in)
+ 4'b0000: seg=7'b0000001; //active low logic here, this displays
+zero on the seven segment
+ 4'b0001: seg=7'b1001111; //"1"
+ 4'b0010: seg=7'b0010010;//"2"
+ 4'b0011: seg=7'b0000110;//3
+ 4'b0100: seg=7'b1001100;//4
+ 4'b0101: seg=7'b0100100;//5
+ 4'b0110: seg=7'b0100000;//6
+ 4'b0111: seg=7'b0001111;//7
+ 4'b1000: seg=7'b0000000;//8
+ 4'b1001: seg=7'b0001100;//9
+ 4'b1010: seg=7'b0001000; //A
+ 4'b1011: seg=7'b0000011;//B
+ 4'b1100: seg=7'b1000110;//C
+ 4'b1101: seg=7'b0100001;//D
+ 4'b1110: seg=7'b0000110;//E
+ 4'b1111: seg=7'b0001110;//F
+ endcase
+ end
+endmodule
+module sevenseg_driver(
+ input clk,
+ input clr,
+ input [3:0] in1,
+ input [3:0] in2,
+ input [3:0] in3,
+ input [3:0] in4,
+ output reg [6:0] seg,
+ output reg [3:0] an
+ );
+
+ wire [6:0] seg1, seg2, seg3, seg4;
+ reg [12:0] segclk; //for turning segment displays one by one on the
+board, 8192, 0-8191
+
+ localparam LEFT=2'b00, MIDLEFT=2'b01, MIDRIGHT=2'b10, RIGHT
+=2'b11;
+ reg [1:0] state=LEFT;
+
+ //instantiating the seven segment decoder four times
+ Decoder_7_segment disp1(in1,seg1);
+ Decoder_7_segment disp2(in2,seg2);
+ Decoder_7_segment disp3(in3,seg3);
+ Decoder_7_segment disp4(in4,seg4);
+
+
+
+ always @(posedge clk)
+ segclk<= segclk+1'b1; //counter goes up by 1
+
+ always @(posedge segclk[12] or posedge clr)
+ begin
+ if (clr==1)
+ begin
+ seg<=7'b0000000;
+ an<=4'b0000;
+ state<=LEFT;
+ end
+ else
+ begin
+ case(state)
+ LEFT:
+ begin seg<=seg1;
+ an<=4'b0111;
+ state<=MIDLEFT;
+ end
+ MIDLEFT:
+ begin
+ seg<=seg2;
+ an<=4'b1011;
+ state<=MIDRIGHT;
+ end
+ MIDRIGHT:
+ begin
+ seg<=seg3;
+ an<=4'b1101;
+ state<=RIGHT;
+ end
+ RIGHT: begin
+ seg<=seg4;
+ an<=4'b1110;
+ state<=LEFT;
+ end
+ endcase
+ end
+ end
+endmodule
+module binarytoBCD(
+ input [11:0] binary, //12 bit input data that would come-in
+ output reg [3:0] thos, //outputs thousands
+ output reg [3:0] huns,//hundreds,
+ output reg [3:0] tens,//tens
+ output reg [3:0] ones//ones
+ );
+
+ reg [11:0] bcd_data=0;
+
+ always @(binary) //1250
+ begin
+ bcd_data=binary; //1250
+ thos=bcd_data/1000;//1250/1000=1, ""1""
+ bcd_data=bcd_data%1000;//1250/1000= 250
+ huns =bcd_data/100;//250/100 =2, ""2""
+ bcd_data=bcd_data%100;//250/100, remainder here is 50
+ tens = bcd_data/10;//50/10 = ""5""
+ ones = bcd_data%10; //5/10 = ""0""
+ end
+ endmodule
+module digital_clock(
+ input clk,
+ input en,
+ input rst, //all of these are our inputs and outputs
+ input hrup,
+ input minup,
+ output [3:0] s1,
+ output [3:0] s2,
+ output [3:0] m1,
+ output [3:0] m2,
+ output [3:0] h1,
+ output [3:0] h2
+ );
+ //time display
+ //h2 h1 : m2 m1
+ reg [5:0] hour=0, min=0, sec=0;//60 for min/sec count, you will
+require 6 bits, 64, 0-63
+ integer clkc=0;
+ localparam onesec=100000000; //1second
+ always @ (posedge clk)
+ begin
+ //reset clock
+ if (rst==1'b1)
+ {hour,min,sec}<=0;
+
+ //set clock
+ else if (minup==1'b1)//minup button is pressed
+ if (min==6'd59)
+ min<=0;
+ else min<=min+1'd1;
+ else if (hrup ==1'b1)
+ if (hour==6'd23)
+ hour<=0;
+ else hour<=hour+1'd1;
+
+ //count
+ else if (en==1'b1)
+ if (clkc==onesec)
+ begin
+ clkc<=0;
+ if(sec==6'd59)
+ begin
+ sec<=0;
+ if (min==6'd59)
+ begin min<=0;
+ if (hour==6'd23)
+ hour<=0;
+ else
+ hour<=hour+1'd1;
+ end
+ else
+ min<=min+1'd1;
+ end
+ else
+ sec<=sec+1'd1;
+ end
+ else
+ clkc<=clkc+1;
+ end
+
+ //instantiating the binarytoBCD module here to convert the
+numbers and display the on the 7-segment
+ binarytoBCD secs(.binary(sec), .thos(), .huns(), .tens(s2), .
+ones(s1));
+ binarytoBCD mins(.binary(min), .thos(), .huns(), .tens(m2), .
+ones(m1));
+ binarytoBCD hours(.binary(hour), .thos(), .huns(), .tens(h2), .
+ones(h1));
+
+endmodule
+module Top_Module(
+ input clk,//fpga clokc
+ input sw, //switch[0] to enable the clock
+ input btnC, //reset the clock
+ input btnU,//hour increment
+ input btnR, //min increment
+ output [6:0] seg,
+ output [3:0] an,
+ output [7:0] led //display seconds,
+ );
+
+ wire [3:0] s1, s2, m1, m2, h1, h2;
+ reg hrup, minup;
+
+ wire btnCclr, btnUclr, btnRclr;
+ reg btnCclr_prev, btnUclr_prev, btnRclr_prev;
+
+ //instantiate the Debounce Module that I just added
+ debounce dbC(clk,btnC,btnCclr);
+ debounce dbU(clk,btnU,btnUclr);//hour up
+ debounce dbR(clk,btnR,btnRclr);// min up
+
+ //instantiate seven segmren t driver and digital clock modules
+
+ sevenseg_driver seg7(clk,1'b0, h2, h1,m2,m1, seg, an);//HH:MM
+ digital_clock clock(clk,sw,btnCclr,
+hrup,minup,s1,s2,m1,m2,h1,h2);
+
+ //detting up the logic for the clock, hrup and minup using the
+pushbuttons
+ always @(posedge clk)
+ begin
+ btnUclr_prev <= btnUclr;//hrup
+ btnRclr_prev <= btnRclr; //minup
+ if (btnUclr_prev ==1'b0 && btnUclr ==1'b1) hrup <=1'b1; else
+hrup<=1'b0;
+ //hrup button is zero and clr button is high then hrup is pressed,
+active
+ if (btnRclr_prev ==1'b0 && btnRclr ==1'b1) minup <=1'b1; else
+minup<=1'b0;
+ //minup button is zero and clr button is high then minup is
+pressed, active
+ end
+ assign led[7:0]={s2,s1};
+endmodule
+module D_FF(
+ input clk,
+ input D,
+ output Q,
+ output Qbar
+ );
+
+ wire clk, D;
+ reg Q, Qbar;
+
+ always @ (posedge clk)
+ begin
+ Q<=D;
+ Qbar<=!Q;
+ end
+ endmodule
+module debounce(
+input btn,clk,
+output btn_clr);
+wire clk_out;
+wire Q1, Q2, Q2_bar;
+Slow_Clock_4Hz u1(clk, clk_out);
+D_FF d1(clk_out, btn, Q1);
+D_FF d2(clk_out, Q1, Q2);
+assign Q2_bar = ~Q2;
+assign btn_clr = Q1 & Q2_bar;
+endmodule
+module Slow_Clock_4Hz(
+ input clk, //input clock of the basys 3 board 100 MHz
+ output clk_out //4Hz slow clock
+ );
+ reg [25:0] count=0;//2^25 equals a number which is greater than
+12.5 million
+ reg clk_out;
+
+ always @(posedge clk)
+ begin
+ count<=count+1;
+ if (count==12_500_000)//equals
+ begin
+ count<=0;//reset itself to zero
+ clk_out=~clk_out;//inverts the clock
+ end
+ end
+
+endmodule
